@@ -1,0 +1,168 @@
+#!/bin/sh
+
+dnspod_enable=$1
+dnspod_token=$2
+dnspod_domain=$3
+#需要更新的子域名列表，多个的话，以空格分割。
+#例如：
+#dnspod_name='www home'
+dnspod_name=$4
+ip=$5
+dnspod_record_id=$6
+my=$7
+
+log_file="/var/log/koolddns.log"
+
+DATE=$(date +'%Y-%m-%d %H:%M:%S')
+timestamp=`date -u "+%Y-%m-%dT%H%%3A%M%%3A%SZ"`
+
+#check for changed ip every 300 seconds
+wait=300
+
+#检查是否安装curl
+curl_status=`which curl 2>/dev/null`
+[ -n "$curl_status" ] || { echo "curl is not installed";exit 3; }
+
+API_url="https://dnsapi.cn"
+format='json'
+lang='en'
+record_type='A'
+offset="2"
+length=""
+common_options="--data-urlencode \"login_token=${dnspod_token}\"\
+				--data-urlencode \"format=${format}\"\
+				--data-urlencode \"lang=${lang}\""
+PROGRAM=$(basename $0)
+is_svc=0
+
+printMsg() {
+	local msg="$1"
+	if [ $is_svc -eq 1 ];then
+		logger -t ${PROGRAM} "${msg}"
+	else
+		echo $msg
+	fi
+}
+
+getJsonValue(){
+	local params="$1"
+	echo $json_data | sed 's/\\\\\//\//g' | sed 's/[{}]//g;s/\(\[\|\]\)//g' |\
+		awk -F ',' '{ for (i=1;i<=NF;i++) { print $i }}' |\
+		sed 's/":/\|/g;s/"//g' |\
+		awk -v k="$params" -F'|' '{ if ($(NF - 1) == k )  print $NF }'
+}
+
+execAPI() {
+	local action="$1"
+	local extra_options="$2"
+	eval "curl -k -A 'xddns' ${API_url}/${action} ${common_options} ${extra_options}"
+}
+
+getDomainId() {
+	local extra_options="--data-urlencode \"domain=${dnspod_domain}\""
+	json_data=$(execAPI "Domain.info" "${extra_options}")
+	getJsonValue id
+}
+
+getRecordId() {
+	local extra_options
+	for sub_domain in $dnspod_name;do
+		extra_options="--data-urlencode \"record_type=${record_type}\"\
+						--data-urlencode \"domain_id=${domain_id}\"\
+						--data-urlencode \"sub_domain=${sub_domain}\"\
+						--data-urlencode \"offset=${offset}\"\
+						--data-urlencode \"length=${length}\""
+
+		json_data=$(execAPI "Record.List" "${extra_options}")
+
+		#check if record type is NS
+		IS_NS=$(getJsonValue type | grep -o 'NS' | head -n1)
+
+		#if there are multi @ subdomains, get the first non-NS record id only
+		if [ "$IS_NS" = "NS" ];then
+			numofline=$(getJsonValue id | sed '/^[0-9]\{7\}$/d' | wc -l)
+			[ $numofline -eq 3 ] && tmp_result_id="$(getJsonValue id | sed '/^[0-9]\{7\}$/d' | head -n1 )" || continue
+		else
+			tmp_result_id="$(getJsonValue id | sed '/^[0-9]\{7\}$/d')"
+		fi	
+		#if result_id is not empty or unset, append a space to split record id
+		result_id="${result_id:+${result_id} }${tmp_result_id}"
+	done
+	echo $result_id
+	exit
+}
+
+updateRecord() {
+	local record_id_list
+	local extra_options
+	local tmp=${dnspod_name}
+	local tmp_dnspod_name
+	printMsg 'Start update records'
+	record_id_list=$(getRecordId)
+	printMsg "Records IDs: ${record_id_list}"
+	for record_id in $record_id_list;do
+		tmp_dnspod_name=$(echo $tmp | awk '{ print $1 }')
+		tmp=${tmp#* }
+		extra_options="--data-urlencode \"domain_id=${domain_id}\"\
+						--data-urlencode \"record_id=${record_id}\"\
+						--data-urlencode \"sub_domain=${tmp_dnspod_name}\"\
+						--data-urlencode \"record_type=${record_type}\"\
+						--data-urlencode \"record_line=默认\"\
+						--data-urlencode \"value=${pub_ip_addr}\"\
+						--data-urlencode \"mx=1\""
+		json_data=$(execAPI "Record.Modify" "${extra_options}")
+		printMsg "Update [${tmp_dnspod_name}.${dnspod_domain}] ${record_type} record to [${pub_ip_addr}] : $(getJsonValue message)"
+	done
+	printMsg 'Update records finish'
+}
+
+checkip() {
+	local oldip=$pub_ip_addr
+	pub_ip_addr=$ip
+	printMsg "old ip: [$oldip], new ip: [$pub_ip_addr]"
+	if [ "$pub_ip_addr" != "$oldip" ];then
+		return 8
+	else
+		return 3
+	fi
+}
+
+execSvc() {
+	local ip=$ip
+	domain_id=`getDomainId $dnspod_domain`
+	printMsg "domain_id: ${domain_id}"
+	while [ 1 ];do
+		checkip
+		if [ $? -eq 8 ];then
+			updateRecord
+		fi
+		sleep $wait
+	done
+}
+
+execUpdate() {
+	domain_id=`getDomainId $dnspod_domain`
+	pub_ip_addr=$ip
+	updateRecord
+}
+
+case $1 in
+	--svc)
+		is_svc=1;
+		printMsg 'Start in Service mode';
+		printMsg "domain: ${dnspod_domain}, dnspod_name: ${dnspod_name}";
+		execSvc;;
+	*)
+		is_svc=0;
+		printMsg "Start update record, domain: ${dnspod_domain}, dnspod_name: ${dnspod_name}";
+		execUpdate;;
+esac
+
+
+if [ "$dnspod_enable" != "1" ]; then
+    echo "$DATE: dnspod没有开启！" >> $log_file
+else
+    query_result=$(query_recordid)
+    check_dnspod
+    go_record
+fi
