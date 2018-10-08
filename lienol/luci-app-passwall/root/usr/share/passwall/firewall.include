@@ -1,0 +1,4 @@
+#!/bin/sh
+# passwall integration for firewall3
+
+/etc/init.d/passwall reload
