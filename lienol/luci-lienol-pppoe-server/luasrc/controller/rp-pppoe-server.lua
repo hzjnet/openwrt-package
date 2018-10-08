@@ -3,7 +3,7 @@ function index()
 if not nixio.fs.access("/etc/config/rp-pppoe-server")then
 return
 end
-entry({"admin","services","rp-pppoe-server"},alias("admin","services","rp-pppoe-server","settings"),_("PPPoE Server"),2)
+entry({"admin","services","rp-pppoe-server"},alias("admin","services","rp-pppoe-server","settings"),_("PPPoE Server"),3)
 entry({"admin","services","rp-pppoe-server","settings"},cbi("rp-pppoe-server/settings"),_("General Settings"),10).leaf=true
 entry({"admin","services","rp-pppoe-server","users"},cbi("rp-pppoe-server/users"),_("Users Manager"),20).leaf=true
 entry({"admin","services","rp-pppoe-server","online"},cbi("rp-pppoe-server/online"),_("Online Users"),30).leaf=true

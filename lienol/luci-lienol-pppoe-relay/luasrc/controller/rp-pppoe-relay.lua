@@ -3,7 +3,7 @@ function index()
 if not nixio.fs.access("/etc/config/rp-pppoe-relay")then
 return
 end
-entry({"admin","services","rp-pppoe-relay"},cbi("rp-pppoe-relay"),_("PPPoE Relay"),1).dependent=true
+entry({"admin","services","rp-pppoe-relay"},cbi("rp-pppoe-relay"),_("PPPoE Relay"),2).dependent=true
 entry({"admin","services","rp-pppoe-relay","status"},call("status")).leaf=true
 end
 function status()
